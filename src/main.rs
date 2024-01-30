@@ -19,7 +19,7 @@ fn add_camera(mut commands: Commands) {
 }
 
 const BASE_DIRECTION: Vec3 = Vec3::new(0., 1., 0.);
-const VELOCITY: f32 = 50.;
+const VELOCITY: f32 = 100.;
 
 fn diff_as_quat(from: Vec3, to: Vec3) -> Quat {
     let rotation_axis = from.cross(to);
@@ -43,7 +43,7 @@ fn add_boids(
     mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
     let mut rng = rand::thread_rng();
-    for i in 0..100 {
+    for i in 0..300 {
         let pos_x = 500. - rng.gen::<f32>() * 1000.;
         let pos_y = 250. - rng.gen::<f32>() * 500.;
         let vel_x = 1. - rng.gen::<f32>() * 2.;
@@ -109,7 +109,10 @@ fn is_neighbor(me: &Boid, other: &Boid) -> bool {
     }
 
     // Calculate the angle between boids in degrees
-    let angle = me.rotation.mul_vec3(BASE_DIRECTION).angle_between(direction);
+    let angle = me
+        .rotation
+        .mul_vec3(BASE_DIRECTION)
+        .angle_between(direction);
 
     // Check angle criterion
     angle < NEIGHBOR_ANGLE
@@ -130,26 +133,31 @@ fn update_direction_of_boids(mut boids: ResMut<Boids>) {
         }
         let vel = boid.rotation.mul_vec3(BASE_DIRECTION);
         let avg_pos = neighbors.iter().map(|b| b.position).sum::<Vec3>() / neighbors.len() as f32;
-        let center = diff_as_quat(vel, Vec3::ZERO - boid.position);
+        // let center = diff_as_quat(vel, Vec3::ZERO - boid.position);
         let convergence = diff_as_quat(vel, avg_pos - boid.position);
         let avoidance = neighbors
             .iter()
             .map(|b| {
-                (boid.position - b.position)
-                    / (boid.position - b.position).length_squared().max(1.0)
+                if (boid.position - b.position).length_squared() < NEIGHBOR_DISTANCE_SQUARED / 4. {
+                    (boid.position - b.position)
+                        / (boid.position - b.position).length_squared().max(1.0)
+                } else {
+                    Vec3::ZERO
+                }
             })
             .sum::<Vec3>();
         let avoidance = diff_as_quat(vel, avoidance);
         let avg_rot = neighbors.iter().map(|b| b.rotation).sum::<Quat>() / neighbors.len() as f32;
         updates.push((
-            (center + convergence * 10. + avoidance * 11.).normalize(),
+            (//center * 2. +
+                convergence * 10. + avoidance * 11.).normalize(),
             avg_rot,
         ));
     }
 
     for (boid, (upd, avg_rot)) in boids.0.iter_mut().zip(updates) {
         boid.rotation *= upd / 100.;
-        boid.rotation = (boid.rotation * 0.9 + avg_rot * 0.1).normalize();
+        boid.rotation = (boid.rotation * 0.95 + avg_rot * 0.05).normalize();
     }
 }
 
