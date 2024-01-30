@@ -21,6 +21,7 @@ fn add_camera(mut commands: Commands) {
 const BASE_DIRECTION: Vec3 = Vec3::new(0., 1., 0.);
 const VELOCITY: f32 = 100.;
 
+/// return a quaternion representing the rotation from one vector to another
 fn diff_as_quat(from: Vec3, to: Vec3) -> Quat {
     let rotation_axis = from.cross(to);
     let rotation_angle = from.angle_between(to);
@@ -36,6 +37,7 @@ fn diff_as_quat(from: Vec3, to: Vec3) -> Quat {
     }
 }
 
+/// initialize the scene with a bunch of boids
 fn add_boids(
     mut boids: ResMut<Boids>,
     mut commands: Commands,
@@ -48,11 +50,16 @@ fn add_boids(
         let pos_y = 250. - rng.gen::<f32>() * 500.;
         let vel_x = 1. - rng.gen::<f32>() * 2.;
         let vel_y = 1. - rng.gen::<f32>() * 2.;
+
         let position = Vec3::new(pos_x, pos_y, 0.);
         let rotation = diff_as_quat(BASE_DIRECTION, Vec3::new(vel_x, vel_y, 0.));
+
         boids.0.push(Boid { position, rotation });
+
         commands.spawn((
+            // boid reference
             BoidRef(i),
+            // boid sprite
             MaterialMesh2dBundle {
                 mesh: meshes.add(shape::RegularPolygon::new(5., 3).into()).into(),
                 material: materials.add(ColorMaterial::from(Color::TURQUOISE)),
@@ -60,22 +67,28 @@ fn add_boids(
                 ..default()
             },
         ));
-        // commands.spawn(
-        //     MaterialMesh2dBundle {
-        //         mesh: meshes.add(shape::RegularPolygon::new(5., 8).into()).into(),
-        //         material: materials.add(ColorMaterial::from(Color::WHITE)),
-        //         transform: Transform::from_translation(Vec3::new(0.,0.,0.)),
-        //         ..default()
-        //     },
-        // );
+        /*
+        // a mark for the center of the scene
+        commands.spawn(
+            MaterialMesh2dBundle {
+                mesh: meshes.add(shape::RegularPolygon::new(5., 8).into()).into(),
+                material: materials.add(ColorMaterial::from(Color::WHITE)),
+                transform: Transform::from_translation(Vec3::new(0.,0.,0.)),
+                ..default()
+            },
+        );
+        */
     }
 }
 
+/// update the position of the boids
 fn move_boids(mut boids: ResMut<Boids>, time: Res<Time>) {
     for boid in &mut boids.0 {
         let velocity = boid.rotation.mul_vec3(BASE_DIRECTION * VELOCITY);
         boid.position.x += velocity.x * time.delta_seconds();
         boid.position.y += velocity.y * time.delta_seconds();
+
+        // bounce off the walls
         if boid.position.x.abs() > 500. || boid.position.y.abs() > 250. {
             boid.rotation = boid
                 .rotation
@@ -89,6 +102,7 @@ fn move_boids(mut boids: ResMut<Boids>, time: Res<Time>) {
         }
     }
 }
+/// update the position of the boid sprites
 fn draw_boids(boids: Res<Boids>, mut query: Query<(&BoidRef, &mut Transform), With<BoidRef>>) {
     for (br, mut transform) in &mut query {
         let boid = &boids.0[br.0];
@@ -100,6 +114,7 @@ fn draw_boids(boids: Res<Boids>, mut query: Query<(&BoidRef, &mut Transform), Wi
 const NEIGHBOR_DISTANCE_SQUARED: f32 = 50.0 * 50.0;
 const NEIGHBOR_ANGLE: f32 = 2.79; // 160.0.to_radians();
 
+/// check if two boids are neighbors according to the distance and angle criteria
 fn is_neighbor(me: &Boid, other: &Boid) -> bool {
     let direction = other.position - me.position;
 
@@ -118,6 +133,7 @@ fn is_neighbor(me: &Boid, other: &Boid) -> bool {
     angle < NEIGHBOR_ANGLE
 }
 
+/// update the direction of the boids with respect to their neighbors
 fn update_direction_of_boids(mut boids: ResMut<Boids>) {
     let mut updates = Vec::new();
     for boid in &boids.0 {
@@ -132,31 +148,38 @@ fn update_direction_of_boids(mut boids: ResMut<Boids>) {
             continue;
         }
         let vel = boid.rotation.mul_vec3(BASE_DIRECTION);
+        // calculate the center of the group
         let avg_pos = neighbors.iter().map(|b| b.position).sum::<Vec3>() / neighbors.len() as f32;
-        // let center = diff_as_quat(vel, Vec3::ZERO - boid.position);
+        // calculate the direction to the center of the group
         let convergence = diff_as_quat(vel, avg_pos - boid.position);
+
+        // direction to avoid collision
         let avoidance = neighbors
             .iter()
             .map(|b| {
-                if (boid.position - b.position).length_squared() < NEIGHBOR_DISTANCE_SQUARED / 4. {
-                    (boid.position - b.position)
-                        / (boid.position - b.position).length_squared().max(1.0)
+                // avoid boids that are too close
+                let length_squared = (boid.position - b.position).length_squared();
+                if length_squared < NEIGHBOR_DISTANCE_SQUARED / 4. {
+                    (boid.position - b.position) / length_squared.max(1.0)
                 } else {
                     Vec3::ZERO
                 }
             })
             .sum::<Vec3>();
+        // calculate the average direction to avoid collision
         let avoidance = diff_as_quat(vel, avoidance);
+
+        // average rotation of the neighbors
         let avg_rot = neighbors.iter().map(|b| b.rotation).sum::<Quat>() / neighbors.len() as f32;
-        updates.push((
-            (//center * 2. +
-                convergence * 10. + avoidance * 11.).normalize(),
-            avg_rot,
-        ));
+
+        // first element is relative to the boid, second is absolute
+        updates.push(((convergence * 10. + avoidance * 11.).normalize(), avg_rot));
     }
 
     for (boid, (upd, avg_rot)) in boids.0.iter_mut().zip(updates) {
+        // first apply the relative rotation
         boid.rotation *= upd / 100.;
+        // then align with the average rotation of the neighbors
         boid.rotation = (boid.rotation * 0.95 + avg_rot * 0.05).normalize();
     }
 }
